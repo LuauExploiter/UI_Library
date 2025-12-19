@@ -1,5 +1,5 @@
--- Project Blocker UI Library
--- Version 1.0.0
+-- Project Blocker UI Library - FIXED VERSION
+-- Version 1.1.0
 
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
@@ -26,6 +26,11 @@ local Colors = {
     Text = Color3.fromRGB(255, 255, 255),
     Subtext = Color3.fromRGB(150, 150, 200)
 }
+
+-- Notification manager to prevent overlapping
+local notificationStack = {}
+local lastNotificationTime = 0
+local NOTIFICATION_COOLDOWN = 0.5
 
 -- Create a new UI Window
 function ProjectBlockerUI.new(title, width, height)
@@ -61,13 +66,14 @@ function ProjectBlockerUI.new(title, width, height)
     
     -- Title Bar
     self.TitleBar = Instance.new("Frame")
-    self.TitleBar.Size = UDim2.new(1, 0, 0, 30)
+    self.TitleBar.Size = UDim2.new(1, 0, 0, 40) -- Increased height for buttons
     self.TitleBar.BackgroundTransparency = 1
     self.TitleBar.Parent = self.MainFrame
     
+    -- Title Label - moved left to avoid tab overlap
     self.TitleLabel = Instance.new("TextLabel")
-    self.TitleLabel.Size = UDim2.new(1, -40, 1, 0)
-    self.TitleLabel.Position = UDim2.new(0, 10, 0, 0)
+    self.TitleLabel.Size = UDim2.new(0.5, -10, 0, 25)
+    self.TitleLabel.Position = UDim2.new(0, 10, 0, 5)
     self.TitleLabel.BackgroundTransparency = 1
     self.TitleLabel.Text = title
     self.TitleLabel.TextColor3 = Colors.Text
@@ -77,26 +83,56 @@ function ProjectBlockerUI.new(title, width, height)
     self.TitleLabel.ZIndex = 11
     self.TitleLabel.Parent = self.TitleBar
     
-    -- Close Button
+    -- Control buttons frame (right side)
+    local controlButtons = Instance.new("Frame")
+    controlButtons.Size = UDim2.new(0.5, -10, 0, 25)
+    controlButtons.Position = UDim2.new(0.5, 0, 0, 5)
+    controlButtons.BackgroundTransparency = 1
+    controlButtons.Parent = self.TitleBar
+    
+    -- Minimize button
+    self.MinimizeButton = Instance.new("TextButton")
+    self.MinimizeButton.Size = UDim2.new(0, 20, 0, 20)
+    self.MinimizeButton.Position = UDim2.new(1, -50, 0, 2.5)
+    self.MinimizeButton.BackgroundColor3 = Colors.Warning
+    self.MinimizeButton.Text = "_"
+    self.MinimizeButton.TextColor3 = Colors.Text
+    self.MinimizeButton.Font = Enum.Font.GothamBold
+    self.MinimizeButton.TextSize = 14
+    self.MinimizeButton.ZIndex = 11
+    self.MinimizeButton.Parent = controlButtons
+    
+    local minimizeCorner = Instance.new("UICorner")
+    minimizeCorner.CornerRadius = UDim.new(0, 4)
+    minimizeCorner.Parent = self.MinimizeButton
+    
+    -- Close button - moved right to avoid tab overlap
     self.CloseButton = Instance.new("TextButton")
     self.CloseButton.Size = UDim2.new(0, 20, 0, 20)
-    self.CloseButton.Position = UDim2.new(1, -25, 0, 5)
+    self.CloseButton.Position = UDim2.new(1, -25, 0, 2.5)
     self.CloseButton.BackgroundColor3 = Colors.Danger
     self.CloseButton.Text = "X"
     self.CloseButton.TextColor3 = Colors.Text
     self.CloseButton.Font = Enum.Font.GothamBold
     self.CloseButton.TextSize = 12
     self.CloseButton.ZIndex = 11
-    self.CloseButton.Parent = self.TitleBar
+    self.CloseButton.Parent = controlButtons
     
     local closeCorner = Instance.new("UICorner")
     closeCorner.CornerRadius = UDim.new(0, 4)
     closeCorner.Parent = self.CloseButton
     
-    -- Content Container
+    -- Tab Bar (below title)
+    self.TabBar = Instance.new("Frame")
+    self.TabBar.Size = UDim2.new(1, -20, 0, 30)
+    self.TabBar.Position = UDim2.new(0, 10, 0, 40) -- Below title bar
+    self.TabBar.BackgroundTransparency = 1
+    self.TabBar.Parent = self.MainFrame
+    
+    -- Content Container (below tab bar)
     self.ContentContainer = Instance.new("Frame")
-    self.ContentContainer.Size = UDim2.new(1, -20, 1, -40)
-    self.ContentContainer.Position = UDim2.new(0, 10, 0, 35)
+    self.ContentContainer.Size = UDim2.new(1, -20, 1, -75) -- Adjusted for tab bar
+    self.ContentContainer.Position = UDim2.new(0, 10, 0, 75) -- Below tab bar
     self.ContentContainer.BackgroundTransparency = 1
     self.ContentContainer.Parent = self.MainFrame
     
@@ -107,14 +143,52 @@ function ProjectBlockerUI.new(title, width, height)
     
     -- Elements tracking
     self.Elements = {}
-    self.CurrentY = 0
+    
+    -- Window state
+    self.Minimized = false
+    self.OriginalSize = UDim2.new(0, width, 0, height)
+    self.OriginalPosition = self.MainFrame.Position
     
     -- Connect close button
     self.CloseButton.MouseButton1Click:Connect(function()
         self:Destroy()
     end)
     
+    -- Connect minimize button
+    self.MinimizeButton.MouseButton1Click:Connect(function()
+        self:ToggleMinimize()
+    end)
+    
     return self
+end
+
+-- Toggle minimize window
+function ProjectBlockerUI:ToggleMinimize()
+    self.Minimized = not self.Minimized
+    
+    if self.Minimized then
+        -- Save original size and position
+        self.OriginalSize = self.MainFrame.Size
+        self.OriginalPosition = self.MainFrame.Position
+        
+        -- Minimize to title bar only
+        self.MainFrame.Size = UDim2.new(0, self.OriginalSize.X.Offset, 0, 40)
+        self.MinimizeButton.Text = "+"
+        self.MinimizeButton.BackgroundColor3 = Colors.Success
+        
+        -- Hide content
+        self.TabBar.Visible = false
+        self.ContentContainer.Visible = false
+    else
+        -- Restore to original size
+        self.MainFrame.Size = self.OriginalSize
+        self.MinimizeButton.Text = "_"
+        self.MinimizeButton.BackgroundColor3 = Colors.Warning
+        
+        -- Show content
+        self.TabBar.Visible = true
+        self.ContentContainer.Visible = true
+    end
 end
 
 -- Create a new Tab
@@ -122,18 +196,19 @@ function ProjectBlockerUI:CreateTab(name)
     local tab = {}
     tab.Name = name
     tab.Visible = false
+    tab.Elements = {}
     
     -- Create tab button
     local tabButton = Instance.new("TextButton")
-    tabButton.Size = UDim2.new(0, 70, 0, 25)
-    tabButton.Position = UDim2.new(0, 10 + (#self.Tabs * 75), 0, 5)
+    tabButton.Size = UDim2.new(0, 70, 1, 0)
+    tabButton.Position = UDim2.new(0, (#self.Tabs * 75), 0, 0)
     tabButton.BackgroundColor3 = Colors.Secondary
     tabButton.Text = name
     tabButton.TextColor3 = Colors.Text
     tabButton.Font = Enum.Font.Gotham
     tabButton.TextSize = 12
     tabButton.ZIndex = 11
-    tabButton.Parent = self.TitleBar
+    tabButton.Parent = self.TabBar
     
     local tabCorner = Instance.new("UICorner")
     tabCorner.CornerRadius = UDim.new(0, 4)
@@ -152,6 +227,7 @@ function ProjectBlockerUI:CreateTab(name)
     tabFrame.BorderSizePixel = 0
     tabFrame.ScrollBarThickness = 3
     tabFrame.ScrollBarImageColor3 = Colors.Primary
+    tabFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
     tabFrame.Parent = self.ContentContainer
     tabFrame.Visible = false
     
@@ -160,8 +236,14 @@ function ProjectBlockerUI:CreateTab(name)
     uiListLayout.SortOrder = Enum.SortOrder.LayoutOrder
     uiListLayout.Parent = tabFrame
     
+    -- Update canvas size when layout changes
+    uiListLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+        tabFrame.CanvasSize = UDim2.new(0, 0, 0, uiListLayout.AbsoluteContentSize.Y)
+    end)
+    
     tab.Frame = tabFrame
     tab.Button = tabButton
+    tab.ListLayout = uiListLayout
     
     -- Tab button click handler
     tabButton.MouseButton1Click:Connect(function()
@@ -199,10 +281,15 @@ end
 function ProjectBlockerUI:AddLabel(text, options)
     options = options or {}
     
+    if not self.CurrentTab then
+        warn("No tab selected! Create a tab first.")
+        return nil
+    end
+    
     local labelFrame = Instance.new("Frame")
     labelFrame.Size = UDim2.new(1, 0, 0, 20)
     labelFrame.BackgroundTransparency = 1
-    labelFrame.LayoutOrder = #self.Elements + 1
+    labelFrame.LayoutOrder = #self.CurrentTab.Elements + 1
     labelFrame.Parent = self.CurrentTab.Frame
     
     local label = Instance.new("TextLabel")
@@ -222,6 +309,7 @@ function ProjectBlockerUI:AddLabel(text, options)
         Frame = labelFrame
     }
     
+    table.insert(self.CurrentTab.Elements, element)
     table.insert(self.Elements, element)
     return element
 end
@@ -230,10 +318,15 @@ end
 function ProjectBlockerUI:AddButton(text, callback, options)
     options = options or {}
     
+    if not self.CurrentTab then
+        warn("No tab selected! Create a tab first.")
+        return nil
+    end
+    
     local buttonFrame = Instance.new("Frame")
     buttonFrame.Size = UDim2.new(1, 0, 0, 35)
     buttonFrame.BackgroundTransparency = 1
-    buttonFrame.LayoutOrder = #self.Elements + 1
+    buttonFrame.LayoutOrder = #self.CurrentTab.Elements + 1
     buttonFrame.Parent = self.CurrentTab.Frame
     
     local button = Instance.new("TextButton")
@@ -295,6 +388,7 @@ function ProjectBlockerUI:AddButton(text, callback, options)
         end
     }
     
+    table.insert(self.CurrentTab.Elements, element)
     table.insert(self.Elements, element)
     return element
 end
@@ -302,12 +396,18 @@ end
 -- Add a Toggle element
 function ProjectBlockerUI:AddToggle(text, defaultValue, callback, options)
     options = options or {}
+    
+    if not self.CurrentTab then
+        warn("No tab selected! Create a tab first.")
+        return nil
+    end
+    
     local toggled = defaultValue or false
     
     local toggleFrame = Instance.new("Frame")
     toggleFrame.Size = UDim2.new(1, 0, 0, 25)
     toggleFrame.BackgroundTransparency = 1
-    toggleFrame.LayoutOrder = #self.Elements + 1
+    toggleFrame.LayoutOrder = #self.CurrentTab.Elements + 1
     toggleFrame.Parent = self.CurrentTab.Frame
     
     local toggleLabel = Instance.new("TextLabel")
@@ -368,19 +468,26 @@ function ProjectBlockerUI:AddToggle(text, defaultValue, callback, options)
         end
     }
     
+    table.insert(self.CurrentTab.Elements, element)
     table.insert(self.Elements, element)
     return element
 end
 
--- Add a Slider element
+-- Add a Slider element (FIXED VERSION)
 function ProjectBlockerUI:AddSlider(text, min, max, defaultValue, callback, options)
     options = options or {}
+    
+    if not self.CurrentTab then
+        warn("No tab selected! Create a tab first.")
+        return nil
+    end
+    
     local value = defaultValue or min
     
     local sliderFrame = Instance.new("Frame")
     sliderFrame.Size = UDim2.new(1, 0, 0, 50)
     sliderFrame.BackgroundTransparency = 1
-    sliderFrame.LayoutOrder = #self.Elements + 1
+    sliderFrame.LayoutOrder = #self.CurrentTab.Elements + 1
     sliderFrame.Parent = self.CurrentTab.Frame
     
     local sliderLabel = Instance.new("TextLabel")
@@ -428,38 +535,46 @@ function ProjectBlockerUI:AddSlider(text, min, max, defaultValue, callback, opti
     
     local function updateSlider(newValue)
         newValue = math.clamp(newValue, min, max)
-        value = newValue
-        sliderLabel.Text = text .. ": " .. tostring(math.floor(newValue * 100) / 100)
-        sliderFill.Size = UDim2.new((newValue - min) / (max - min), 0, 1, 0)
-        sliderButton.Position = UDim2.new((newValue - min) / (max - min), -7.5, 0.5, -7.5)
+        value = math.floor(newValue * 100) / 100 -- Round to 2 decimal places
+        sliderLabel.Text = text .. ": " .. tostring(value)
+        local percentage = (value - min) / (max - min)
+        sliderFill.Size = UDim2.new(percentage, 0, 1, 0)
+        sliderButton.Position = UDim2.new(percentage, -7.5, 0.5, -7.5)
         
         if callback then
-            callback(newValue)
+            callback(value)
         end
     end
     
+    -- Mouse down on slider button
     sliderButton.MouseButton1Down:Connect(function()
         dragging = true
     end)
     
-    UserInputService.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            dragging = false
-        end
-    end)
-    
+    -- Mouse down on track (jump to position)
     sliderTrack.MouseButton1Down:Connect(function(x, y)
         local relativeX = x - sliderTrack.AbsolutePosition.X
-        local percentage = relativeX / sliderTrack.AbsoluteSize.X
+        local percentage = math.clamp(relativeX / sliderTrack.AbsoluteSize.X, 0, 1)
         updateSlider(min + (max - min) * percentage)
+        dragging = true
     end)
     
-    game:GetService("UserInputService").InputChanged:Connect(function(input)
+    -- Mouse move while dragging
+    local mouseMoveConnection
+    mouseMoveConnection = game:GetService("UserInputService").InputChanged:Connect(function(input)
         if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
             local mouse = game:GetService("Players").LocalPlayer:GetMouse()
             local relativeX = mouse.X - sliderTrack.AbsolutePosition.X
             local percentage = math.clamp(relativeX / sliderTrack.AbsoluteSize.X, 0, 1)
             updateSlider(min + (max - min) * percentage)
+        end
+    end)
+    
+    -- Mouse up
+    local mouseUpConnection
+    mouseUpConnection = game:GetService("UserInputService").InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = false
         end
     end)
     
@@ -474,9 +589,11 @@ function ProjectBlockerUI:AddSlider(text, min, max, defaultValue, callback, opti
         end,
         Get = function()
             return value
-        end
+        end,
+        Connections = {mouseMoveConnection, mouseUpConnection}
     }
     
+    table.insert(self.CurrentTab.Elements, element)
     table.insert(self.Elements, element)
     return element
 end
@@ -484,6 +601,12 @@ end
 -- Add a Dropdown element
 function ProjectBlockerUI:AddDropdown(text, optionsList, defaultValue, callback, options)
     options = options or {}
+    
+    if not self.CurrentTab then
+        warn("No tab selected! Create a tab first.")
+        return nil
+    end
+    
     local selected = defaultValue or optionsList[1]
     local dropdownOpen = false
     
@@ -491,7 +614,7 @@ function ProjectBlockerUI:AddDropdown(text, optionsList, defaultValue, callback,
     dropdownFrame.Size = UDim2.new(1, 0, 0, 35)
     dropdownFrame.BackgroundTransparency = 1
     dropdownFrame.ClipsDescendants = true
-    dropdownFrame.LayoutOrder = #self.Elements + 1
+    dropdownFrame.LayoutOrder = #self.CurrentTab.Elements + 1
     dropdownFrame.Parent = self.CurrentTab.Frame
     
     local dropdownButton = Instance.new("TextButton")
@@ -521,7 +644,7 @@ function ProjectBlockerUI:AddDropdown(text, optionsList, defaultValue, callback,
     dropdownArrow.Size = UDim2.new(0, 15, 0, 15)
     dropdownArrow.Position = UDim2.new(1, -25, 0.5, -7.5)
     dropdownArrow.BackgroundTransparency = 1
-    dropdownArrow.Image = "rbxassetid://6031091004" -- Down arrow icon
+    dropdownArrow.Image = "rbxassetid://6031091004"
     dropdownArrow.ImageColor3 = Colors.Text
     dropdownArrow.Parent = dropdownButton
     
@@ -608,6 +731,7 @@ function ProjectBlockerUI:AddDropdown(text, optionsList, defaultValue, callback,
         end
     }
     
+    table.insert(self.CurrentTab.Elements, element)
     table.insert(self.Elements, element)
     return element
 end
@@ -615,13 +739,19 @@ end
 -- Add a Keybind element
 function ProjectBlockerUI:AddKeybind(text, defaultKey, callback, options)
     options = options or {}
+    
+    if not self.CurrentTab then
+        warn("No tab selected! Create a tab first.")
+        return nil
+    end
+    
     local key = defaultKey or "G"
     local rebinding = false
     
     local keybindFrame = Instance.new("Frame")
     keybindFrame.Size = UDim2.new(1, 0, 0, 30)
     keybindFrame.BackgroundTransparency = 1
-    keybindFrame.LayoutOrder = #self.Elements + 1
+    keybindFrame.LayoutOrder = #self.CurrentTab.Elements + 1
     keybindFrame.Parent = self.CurrentTab.Frame
     
     local keybindLabel = Instance.new("TextLabel")
@@ -698,33 +828,50 @@ function ProjectBlockerUI:AddKeybind(text, defaultKey, callback, options)
         end,
         Get = function()
             return key
-        end
+        end,
+        Connection = keybindConnection
     }
     
+    table.insert(self.CurrentTab.Elements, element)
     table.insert(self.Elements, element)
     return element
 end
 
--- Show a notification
+-- Show a notification (FIXED - non-overlapping)
 function ProjectBlockerUI:Notification(message, duration)
     duration = duration or 5
     
-    local notificationScreenGui = Instance.new("ScreenGui")
-    notificationScreenGui.Name = "ProjectBlockerNotification"
-    notificationScreenGui.ResetOnSpawn = false
-    notificationScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-    notificationScreenGui.DisplayOrder = 1000
-    notificationScreenGui.Parent = player.PlayerGui or CoreGui
+    -- Check cooldown
+    local currentTime = tick()
+    if currentTime - lastNotificationTime < NOTIFICATION_COOLDOWN then
+        task.wait(NOTIFICATION_COOLDOWN)
+    end
+    
+    lastNotificationTime = tick()
+    
+    -- Create or get notification container
+    local notificationContainer = CoreGui:FindFirstChild("ProjectBlockerNotifications")
+    if not notificationContainer then
+        notificationContainer = Instance.new("ScreenGui")
+        notificationContainer.Name = "ProjectBlockerNotifications"
+        notificationContainer.ResetOnSpawn = false
+        notificationContainer.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+        notificationContainer.DisplayOrder = 1000
+        notificationContainer.Parent = player.PlayerGui or CoreGui
+    end
+    
+    -- Calculate position based on existing notifications
+    local notificationCount = #notificationContainer:GetChildren()
+    local yOffset = notificationCount * 90
     
     local notificationFrame = Instance.new("Frame")
     notificationFrame.Size = UDim2.new(0, 350, 0, 80)
-    notificationFrame.Position = UDim2.new(0.5, -175, 0.1, 0)
+    notificationFrame.Position = UDim2.new(1, -370, 0, 10 + yOffset) -- Top-right corner
     notificationFrame.BackgroundColor3 = Colors.Danger
     notificationFrame.BackgroundTransparency = 0.1
     notificationFrame.BorderSizePixel = 0
     notificationFrame.ZIndex = 100
-    notificationFrame.Visible = true
-    notificationFrame.Parent = notificationScreenGui
+    notificationFrame.Parent = notificationContainer
     
     local notifCorner = Instance.new("UICorner")
     notifCorner.CornerRadius = UDim.new(0, 8)
@@ -747,7 +894,6 @@ function ProjectBlockerUI:Notification(message, duration)
     notifText.ZIndex = 101
     notifText.TextXAlignment = Enum.TextXAlignment.Center
     notifText.TextYAlignment = Enum.TextYAlignment.Center
-    notifText.Visible = true
     notifText.Parent = notificationFrame
     
     -- Add a close button
@@ -767,17 +913,17 @@ function ProjectBlockerUI:Notification(message, duration)
     closeCorner.Parent = closeButton
     
     closeButton.MouseButton1Click:Connect(function()
-        notificationScreenGui:Destroy()
+        notificationFrame:Destroy()
     end)
     
     -- Auto-remove after duration
     task.delay(duration, function()
-        if notificationScreenGui and notificationScreenGui.Parent then
-            notificationScreenGui:Destroy()
+        if notificationFrame and notificationFrame.Parent then
+            notificationFrame:Destroy()
         end
     end)
     
-    return notificationScreenGui
+    return notificationFrame
 end
 
 -- Toggle UI visibility
@@ -797,6 +943,27 @@ end
 
 -- Destroy UI
 function ProjectBlockerUI:Destroy()
+    -- Disconnect all connections
+    for _, element in ipairs(self.Elements) do
+        if element.Connections then
+            for _, conn in ipairs(element.Connections) do
+                if conn then
+                    conn:Disconnect()
+                end
+            end
+        end
+        if element.Connection then
+            element.Connection:Disconnect()
+        end
+    end
+    
+    -- Destroy notifications container
+    local notificationContainer = CoreGui:FindFirstChild("ProjectBlockerNotifications")
+    if notificationContainer then
+        notificationContainer:Destroy()
+    end
+    
+    -- Destroy main window
     if self.Window then
         self.Window:Destroy()
     end
